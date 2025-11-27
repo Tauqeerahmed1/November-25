@@ -1,0 +1,1053 @@
+Evertise Ai PR — Software Requirements Specification (SRS)
+1. Document Overview
+Title: SRS for Evertise Ai PR — AI Press-Release Generator
+Purpose: Describe requirements for a PHP-based web application that collects user inputs (form) and generates PR drafts via the ChatGPT/OpenAI API.
+
+2. Scope
+Build a secure, scalable web application (front-end form + PHP back-end) that:
+* Collects structured PR inputs from customers (issuer info, company, category, dateline, quotes, etc.)
+* Calls ChatGPT API to generate press-release drafts
+* Stores requests and generated drafts in DB
+* Presents editable PR drafts to customer and allows export (TXT, DOCX, PDF)
+* Enforcement: quote text must be inserted verbatim in the release (no modification)
+* Includes admin console for review, logs, usage metrics, and moderation controls
+Out of scope: automated distribution to media outlets (this can be added later as a separate module).
+
+3. Stakeholders
+* Primary user: Evertise customers (marketing teams, PR execs, SMB owners)
+* Admin: Evertise staff (review, publish, billing)
+* DevOps/Engineers: deploy & maintain app
+* Legal/Compliance: privacy, data retention policies
+
+4. Definitions & Abbreviations
+* PR: Press Release
+* AI/LLM: Large language model (ChatGPT / OpenAI)
+* Dateline: Country, State, City, Date entry shown at beginning of PR
+
+5. High-level System Architecture
+1. Frontend (React/Vanilla HTML): Form UI collects inputs, client validation.
+2. Backend (PHP 8.2+): REST endpoints:
+o /api/generate — create PR request, call OpenAI
+o /api/status/{id} — check generation status
+o /api/drafts/{id} — fetch/edit/save final draft
+3. Database: MySQL/Postgres — store users, requests, drafts, logs, billing usage
+4. OpenAI API: Chat Completions / Responses API for generation. (Use official client or server-side cURL.) OpenAI Platform+1
+5. Admin Panel: review queue, content moderation, usage & billing dashboard
+6. Storage: S3-compatible for generated assets; backups
+7. Auth: OAuth2/JWT for admin; optional account login for customers
+
+6. Functional Requirements
+6.1 User flows (summary)
+* F1 — Submit PR input: User fills the PR form (fields listed below) ? clicks Generate.
+* F2 — Validate & enqueue: Backend validates input, creates a request record; if pre-moderation configured, send to moderation; otherwise call OpenAI.
+* F3 — Generate draft: Backend sends prompt to OpenAI ? receives draft ? stores draft.
+* F4 — Present draft: Show editable draft to user; provide buttons: Edit, Save, Export (DOCX/PDF/TXT), Submit for distribution.
+* F5 — Quote enforcement: Quotes provided by user must appear verbatim (inverted commas) in the final output. System verifies before exposing final results.
+* F6 — Admin review: Admin can view all requests, re-generate with changed settings, moderate content, revoke or delete drafts.
+* F7 — Usage & billing: Track token usage (or API response length) per request and per user to calculate costs.
+6.2 Form fields (input specifics)
+Each field is required unless marked optional:
+1. Name (issuer_name) — string, 2–100 chars, required.
+2. Email (issuer_email) — email format, required.
+3. Company Name (company_name) — string, required.
+4. Website (company_website) — URL format, optional but recommended.
+5. Press Release Topic (topic_type) — enum: Product launch, Service launch, Business expansion, Promotion, New hiring, Company news, Partnership, Event, Award, Expert positioning, Marketing, Crisis, Rebranding, New business, M&A, Research. Required.
+6. Category (category) — enum: Technology, Finance, Business, Health, Energy, etc. Required.
+7. Dateline (dateline_country, dateline_state, dateline_city, dateline_date) — country/state/city free text; date ISO 8601. Required.
+8. Quotes (quotes[]) — list of quote objects: { speaker_name, speaker_title, quote_text }. Quotes must be inserted verbatim in the generated PR and wrapped in quotation marks. Required at least 0 (allowed to be empty) but if present must be preserved.
+9. Tone / Audience (tone) — optional: Formal, Informal, Technical, Promotional.
+10. Word length / format (length_target) — optional: Short (200–350), Medium (350–600), Long (600–1000).
+11. Keywords (seo_keywords) — optional list (for SEO inclusion).
+12. Attach assets (optional) — logo, image files (max size limits).
+6.3 Functional requirement list (IDs)
+* FR-001: The system shall provide the PR input form with fields above.
+* FR-002: The system shall validate user inputs (server-side + client-side).
+* FR-003: The system shall send sanitized prompts to OpenAI and store the request.
+* FR-004: The system shall ensure any user-provided quotes are included verbatim (verbatim enforcement).
+* FR-005: The system shall allow users to preview, edit, and export generated PRs.
+* FR-006: The system shall log requests, tokens used, and API responses.
+* FR-007: The system shall perform content moderation on generated text (OpenAI Moderation API or internal rules).
+* FR-008: The system shall support re-generation with revised prompts and parameters.
+* FR-009: The system shall notify users by email when generation completes (async background job).
+* FR-010: The system shall rate-limit generation attempts per user (configurable).
+* FR-011: The system shall allow admin override (edit, approve, delete).
+
+7. Non-Functional Requirements
+7.1 Performance & Scalability
+* NFR-001: Average generation latency (server ? OpenAI ? response) — typical target < 8 seconds for small/medium drafts; for longer drafts allow queued job processing.
+* NFR-002: Support concurrent generation jobs: scale horizontally with worker queue (Redis + PHP workers or Laravel queue).
+* NFR-003: System should gracefully handle API rate limits (backoff and retry).
+7.2 Availability & Reliability
+* NFR-004: Target uptime >= 99.5% (excluding scheduled maintenance).
+* NFR-005: Use retries and durable job queue for generation to avoid lost requests.
+7.3 Security
+* NFR-006: API keys stored encrypted (no keys in repo). Use environment variables and secrets manager.
+* NFR-007: All server-client communication via HTTPS/TLS 1.2+.
+* NFR-008: Role-based access control for admin endpoints.
+* NFR-009: Input sanitization to avoid injection, validate uploaded files, check for malicious content.
+* NFR-010: Rate limit per user to prevent abuse.
+7.4 Privacy & Compliance
+* NFR-011: PII (email/name) handling: store encrypted or hashed where feasible; give users data-retention options and deletion on request (GDPR right to be forgotten).
+* NFR-012: Provide privacy policy and explicit consent before storing content.
+7.5 Auditability & Logging
+* NFR-013: Log API calls, timestamps, user id, cost estimate, and moderation status.
+* NFR-014: Logs retained per company policy (e.g., 90 days) and stored securely.
+7.6 Maintainability & Extensibility
+* NFR-015: Codebase with modular design: prompt templates, generators, UI separated for fast iteration.
+* NFR-016: Configurable prompt templates per category and tone.
+
+8. Data Model (simplified)
+Tables (primary columns)
+* users — id, name, email (unique), hashed_password, created_at
+* requests — id, user_id, issuer_name, issuer_email, company_name, website, topic_type, category, dateline_country, dateline_state, dateline_city, dateline_date, tone, length_target, seo_keywords, created_at, status (queued/in_progress/complete/error), token_cost
+* quotes — id, request_id, speaker_name, speaker_title, quote_text (verbatim)
+* drafts — id, request_id, content, content_html, generated_at, moderator_id, moderation_status
+* logs — id, request_id, action, message, created_at, meta_json
+
+9. Prompt Engineering & Template
+* Maintain a structured prompt template to send to the LLM. Example:
+You are a professional press release writer. Produce a press release using the following inputs.
+- Topic: {topic_type}
+- Company: {company_name}, Website: {website}
+- Dateline: {dateline_city}, {dateline_state}, {dateline_country} — {dateline_date}
+- Category: {category}
+- Tone: {tone}
+- Word target: {length_target}
+- SEO keywords: {seo_keywords}
+
+Include the following quotes verbatim (do not change wording; keep them wrapped in quotation marks exactly as provided):
+{quote_list}
+
+Write the press release with a headline, subheadline (optional), dateline line, 3–5 paragraphs body, and an About section. Ensure all quotes appear verbatim and that no paraphrase or alteration is made to them. Keep company names and dates accurate. Output in plain text and include an “About {company_name}” paragraph.
+
+10. OpenAI Integration Details
+10.1 Endpoint & Client
+* Use the OpenAI Chat Completions or Responses API as appropriate. Refer to OpenAI API docs for correct endpoint and parameters. OpenAI Platform
+* Use the official PHP client openai-php/client for cleaner integration if available (requires PHP 8.2+). GitHub
+10.2 Example PHP snippets
+Composer install (recommended client):
+composer require openai-php/client guzzlehttp/guzzle
+Example using openai-php client (recommended):
+<?php
+require 'vendor/autoload.php';
+use OpenAI;
+
+$apiKey = getenv('OPENAI_API_KEY'); // set via env
+$client = OpenAI::client($apiKey);
+
+// Build the prompt based on request fields:
+$prompt = "..."; // fill with the template and inserted fields
+
+$response = $client->chat()->create([
+    'model' => 'gpt-4o', // choose appropriate model
+    'messages' => [
+        ['role' => 'system', 'content' => 'You are a professional press release writer.'],
+        ['role' => 'user', 'content' => $prompt]
+    ],
+    'max_tokens' => 1200,
+    'temperature' => 0.3,
+]);
+
+$generated = $response->choices[0]->message->content;
+// store $generated in DB
+(Adapt fields to the exact client API shape if the library uses responses() interface; check the library docs before coding.)
+Fallback cURL PHP example (if you don't use the client):
+<?php
+$apiKey = getenv('OPENAI_API_KEY');
+$url = 'https://api.openai.com/v1/chat/completions';
+$data = [
+  "model" => "gpt-4o",
+  "messages" => [
+    ["role" => "system", "content" => "You are a professional press release writer."],
+    ["role" => "user", "content" => $prompt]
+  ],
+  "max_tokens" => 1200,
+  "temperature" => 0.3
+];
+
+$ch = curl_init($url);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_HTTPHEADER, [
+  'Content-Type: application/json',
+  'Authorization: Bearer '. $apiKey
+]);
+curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+$result = curl_exec($ch);
+curl_close($ch);
+$json = json_decode($result, true);
+$generated = $json['choices'][0]['message']['content'] ?? '';
+Important: Always call OpenAI from your server (not client?) to keep API key secret. Track and store per-request token usage and cost. See OpenAI docs for fields and request/response shapes.
+11. Quote Verification & Enforcement
+* Requirement: The quotes supplied must appear verbatim and enclosed in quotation marks.
+* Implementation:
+o After generation, run a deterministic verification step that checks all quote_text strings are present exactly as substring(s) in the generated content. If not present, either:
+* Re-run generation with stronger instruction to include verbatim quotes and/or
+* Flag for manual review and notify the user.
+* FR mapping: FR-004
+
+12. Content Moderation & Safety
+* Use the OpenAI Moderation endpoint or an internal ruleset to filter content for hate speech, defamation, adult content, or illegal content prior to saving/delivering. If flagged, mark request for manual review and block distribution. (OpenAI docs describe Moderation API.) OpenAI Platform
+* For sensitive categories (Crisis PR), require manual approval by admin prior to public release.
+
+13. Error Handling & Retries
+* API errors: Implement exponential backoff for rate-limit errors (429). Retries capped (e.g., 3 attempts).
+* Validation errors: Return clear field-specific messages to user with inline UI hints.
+* Fallback: If generation fails after retries, preserve user inputs and notify user with recommended next steps.
+
+14. Logging & Monitoring
+* Log: request_id, user_id, timestamp, prompt_hash, model, tokens_used, cost_estimate, response_status, moderation_status.
+* Monitor: queue length, average generation time, error rates, API key usage.
+* Alerts: send alerts when API cost or error rates exceed thresholds.
+
+15. Rate Limiting, Quotas & Billing
+* Configurable rate limits per account (e.g., 5 generations / hour) with tiered higher limits for paid customers.
+* Track token usage per request for billing and quota enforcement.
+* Admin can set per-request max_tokens and token caps per user group.
+
+16. Testing & Acceptance Criteria
+16.1 Unit & Integration Tests
+* Input validation tests (email format, mandatory fields).
+* Prompt composition tests (check template placeholders replaced).
+* Quote enforcement tests: ensure quotes present verbatim.
+* API integration tests: mock OpenAI responses for predictable outputs.
+* Admin panel tests.
+16.2 Acceptance Criteria
+* AC-1: User can submit a complete PR form and receive a generated draft within the acceptable time threshold (or gets queued notification).
+* AC-2: All provided quotes appear exactly (verbatim) in the final draft.
+* AC-3: Moderation flags are correctly applied, and flagged items enter admin review queue.
+* AC-4: Token usage is tracked and visible in admin dashboard.
+
+17. Deployment & Infrastructure
+* Environments: dev, staging, production.
+* Hosting: Containerized services (Docker), orchestrated with Kubernetes or simpler Docker Compose / PaaS (Heroku / Render / DigitalOcean App).
+* Workers: Use queue workers for background generation (Redis + worker process).
+* Secrets: Use secrets manager for OPENAI_API_KEY and DB credentials.
+* Backups: DB snapshots and object storage backups.
+
+18. Security & Compliance Checklist
+* Secrets in env manager; rotate API keys periodically.
+* TLS for all endpoints.
+* Database encrypted at rest (if available).
+* Role-based admin access controls + MFA for admin users.
+* Data deletion workflow (user requests).
+* Privacy policy & TOS updated to disclose AI usage and data handling.
+
+19. UX Notes & UI Wireframe (text)
+* Page: Generate Press Release
+o Header: Title + short instructions
+o Form: grouped sections (Issuer info | Company info | PR details | Quotes | Advanced options)
+o Quotes UI: add/remove quote blocks with speaker name/title and a large textarea for quote_text
+o Submit button: “Generate Draft” (shows estimate of cost/tokens)
+o Post-submission: progress modal / job queued screen ? when complete show editor with generated content and buttons: Edit / Save / Export / Request Human Edit
+* Editor: Rich text editor with highlight for inserted quotes (protect from accidental edit? optional toggle to lock quoted text blocks)
+
+20. Admin Features
+* Dashboard: recent requests, status, token usage, flagged content
+* Manual regenerate with modified prompt or model
+* Approve/Reject flagged drafts
+* Export logs for billing
+* Manage templates and tone presets
+
+21. Metrics & KPIs
+* of PRs generated per day/week
+* Average tokens per PR and cost per PR
+* Conversion rate (generated ? published/distributed)
+* Moderation rate (% flagged)
+* Average generation time
+
+22. Implementation Roadmap (milestones)
+1. MVP — Form + backend generation + quote enforcement + display & export (4–6 weeks)
+2. Add moderation pipeline + admin panel (2–3 weeks)
+3. Rate limits, billing & token tracking (1–2 weeks)
+4. UX polish, SEO templates, and multi-language support (2–4 weeks)
+
+23. Risks & Mitigations
+* Risk: OpenAI model outputs hallucinate facts.
+Mitigation: Limit “invented” content, instruct model to avoid unverified claims; flag numbers & claims for admin review.
+* Risk: Abuse / offensive content.
+Mitigation: Moderation API + rate limiting + manual review.
+* Risk: Cost overrun from large models.
+Mitigation: Model selection policy (use smaller model for non-critical generations), token caps, warn users with cost estimate.
+
+24. Sample Acceptance Test (Quote test)
+* Input: Two quotes:
+o "We are thrilled to launch this product," — Jane Doe, CEO
+o "This will change the market," — John Smith, CTO
+* Generate PR.
+* Pass if both exact substrings appear in generated content, including the same punctuation and spacing, enclosed in quotes.
+
+25. Appendix A — References
+* OpenAI Chat Completions / API docs. OpenAI Platform
+* openai-php client (official PHP library) (composer package & usage). GitHub
+* Example PHP cURL approaches and community examples. Medium+1
+
+26. Next steps (recommended)
+1. Approve SRS or request edits.
+2. Choose initial model (cost vs quality tradeoff: e.g., gpt-4o or gpt-4.1 for higher quality vs gpt-3.5/gpt-o4-mini for cost). I can prepare a cost comparison if you want.
+3. I can generate the initial PHP implementation skeleton (routes, DB schema SQL, and sample worker) — tell me if you want Laravel or plain PHP.
+File: generate-press-release.php
+<?php
+/*******************************************************
+ * Evertise Ai PR Generator (Single File Demo)
+ * -----------------------------------------------------
+ * Dependencies: PHP 8.2+, cURL enabled
+ * Database: MySQL 8+ (see schema below)
+ * Author: Gulfam Shabbir (Evertise Ai PR)
+ *******************************************************/
+
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// === CONFIG ===
+$apiKey = getenv('OPENAI_API_KEY'); // or paste here for testing only
+$dbHost = "localhost";
+$dbName = "evertise_ai_pr";
+$dbUser = "root";
+$dbPass = "";
+
+// === DB CONNECTION ===
+try {
+    $pdo = new PDO("mysql:host=$dbHost;dbname=$dbName;charset=utf8mb4", $dbUser, $dbPass);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+} catch (PDOException $e) {
+    die("Database connection failed: " . $e->getMessage());
+}
+
+// === HANDLE FORM SUBMISSION ===
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    $issuer_name    = trim($_POST['issuer_name']);
+    $issuer_email   = trim($_POST['issuer_email']);
+    $company_name   = trim($_POST['company_name']);
+    $company_website = trim($_POST['company_website']);
+    $topic_type     = trim($_POST['topic_type']);
+    $category       = trim($_POST['category']);
+    $dateline_country = trim($_POST['dateline_country']);
+    $dateline_state = trim($_POST['dateline_state']);
+    $dateline_city  = trim($_POST['dateline_city']);
+    $dateline_date  = trim($_POST['dateline_date']);
+    $quotes         = array_filter($_POST['quotes'] ?? []);
+    $tone           = $_POST['tone'] ?? 'Formal';
+    $length_target  = $_POST['length_target'] ?? 'Medium';
+
+    // Simple validation
+    if (!$issuer_name || !$issuer_email || !$company_name || !$topic_type || !$category) {
+        die("All required fields must be filled.");
+    }
+
+    // === Insert request into DB ===
+    $stmt = $pdo->prepare("INSERT INTO requests (issuer_name, issuer_email, company_name, company_website, topic_type, category, dateline_country, dateline_state, dateline_city, dateline_date, tone, length_target, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NOW())");
+    $stmt->execute([$issuer_name, $issuer_email, $company_name, $company_website, $topic_type, $category, $dateline_country, $dateline_state, $dateline_city, $dateline_date, $tone, $length_target]);
+    $request_id = $pdo->lastInsertId();
+
+    // === Store quotes ===
+    if (!empty($quotes)) {
+        $stmtQ = $pdo->prepare("INSERT INTO quotes (request_id, quote_text) VALUES (?, ?)");
+        foreach ($quotes as $q) {
+            $stmtQ->execute([$request_id, $q]);
+        }
+    }
+
+    // === Build prompt ===
+    $prompt = "
+You are a professional press release writer for the company '{$company_name}'.
+
+Write a press release about a '{$topic_type}' in the '{$category}' category.
+Dateline: {$dateline_city}, {$dateline_state}, {$dateline_country} — {$dateline_date}.
+Tone: {$tone}. Length: {$length_target}.
+
+Include the following quotes verbatim, wrapped in quotation marks exactly as provided:
+" . implode("\n", array_map(fn($q) => "\"{$q}\"", $quotes)) . "
+
+The structure should be:
+- Headline
+- Subheadline (optional)
+- Dateline
+- 3–5 body paragraphs
+- About {$company_name} section.
+
+Ensure all quotes appear exactly as written.
+Company website: {$company_website}
+    ";
+
+    // === Call OpenAI API ===
+    $payload = [
+        "model" => "gpt-4o-mini",
+        "messages" => [
+            ["role" => "system", "content" => "You are a professional PR copywriter specialized in media-friendly press releases."],
+            ["role" => "user", "content" => $prompt]
+        ],
+        "max_tokens" => 1000,
+        "temperature" => 0.4
+    ];
+
+    $ch = curl_init("https://api.openai.com/v1/chat/completions");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            "Content-Type: application/json",
+            "Authorization: Bearer $apiKey"
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload)
+    ]);
+
+    $result = curl_exec($ch);
+    if (curl_errno($ch)) {
+        die("API call failed: " . curl_error($ch));
+    }
+    curl_close($ch);
+
+    $data = json_decode($result, true);
+    $generated_text = $data['choices'][0]['message']['content'] ?? '';
+
+    // === Save generated draft ===
+    $stmt = $pdo->prepare("INSERT INTO drafts (request_id, content, generated_at) VALUES (?, ?, NOW())");
+    $stmt->execute([$request_id, $generated_text]);
+
+    // === Display result ===
+    echo "<h2>Generated Press Release</h2>";
+    echo "<div style='white-space: pre-wrap; border:1px solid #ccc; padding:15px; border-radius:8px;'>" . htmlspecialchars($generated_text) . "</div>";
+    echo "<br><a href='?'>Generate Another</a>";
+    exit;
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Evertise Ai PR Generator</title>
+<style>
+body { font-family: Arial, sans-serif; margin:40px; background:#f8f9fa; }
+form { background:white; padding:25px; border-radius:8px; max-width:700px; margin:auto; box-shadow:0 2px 6px rgba(0,0,0,0.1);}
+input, select, textarea { width:100%; padding:8px; margin:5px 0 15px; border:1px solid #ccc; border-radius:4px;}
+button { background:#007bff; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;}
+button:hover { background:#0056b3;}
+</style>
+</head>
+<body>
+<h1>Evertise Ai PR Generator</h1>
+<form method="post">
+<h3>Issuer Information</h3>
+<label>Name*</label><input name="issuer_name" required>
+<label>Email*</label><input name="issuer_email" type="email" required>
+
+<h3>Company Information</h3>
+<label>Company Name*</label><input name="company_name" required>
+<label>Company Website</label><input name="company_website" type="url">
+
+<h3>Press Release Details</h3>
+<label>Press Release Topic*</label>
+<select name="topic_type" required>
+    <option value="">Select...</option>
+    <option>Product launch</option><option>Service launch</option><option>Business expansion</option>
+    <option>Promotion</option><option>New hiring</option><option>Company news</option>
+    <option>Partnership</option><option>Event</option><option>Award</option>
+    <option>Expert positioning</option><option>Marketing</option><option>Crisis</option>
+    <option>Rebranding</option><option>New business</option><option>Mergers and Acquisitions</option>
+    <option>Research</option>
+</select>
+
+<label>Category*</label>
+<select name="category" required>
+    <option>Technology</option><option>Finance</option><option>Business</option>
+    <option>Health</option><option>Energy</option><option>Education</option>
+</select>
+
+<h3>Dateline</h3>
+<label>Country*</label><input name="dateline_country" required>
+<label>State*</label><input name="dateline_state" required>
+<label>City*</label><input name="dateline_city" required>
+<label>Date*</label><input name="dateline_date" type="date" required>
+
+<h3>Quotes (optional)</h3>
+<textarea name="quotes[]" placeholder="Enter first quote..."></textarea>
+<textarea name="quotes[]" placeholder="Enter second quote..."></textarea>
+
+<h3>Other Options</h3>
+<label>Tone</label>
+<select name="tone"><option>Formal</option><option>Promotional</option><option>Technical</option></select>
+
+<label>Length</label>
+<select name="length_target"><option>Short</option><option selected>Medium</option><option>Long</option></select>
+
+<button type="submit">Generate Press Release</button>
+</form>
+</body>
+</html>
+Sample MySQL Schema
+CREATE DATABASE evertise_ai_pr CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE evertise_ai_pr;
+
+CREATE TABLE requests (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    issuer_name VARCHAR(100) NOT NULL,
+    issuer_email VARCHAR(150) NOT NULL,
+    company_name VARCHAR(200) NOT NULL,
+    company_website VARCHAR(255),
+    topic_type VARCHAR(100) NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    dateline_country VARCHAR(100),
+    dateline_state VARCHAR(100),
+    dateline_city VARCHAR(100),
+    dateline_date DATE,
+    tone VARCHAR(50),
+    length_target VARCHAR(50),
+    created_at DATETIME
+);
+
+CREATE TABLE quotes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    request_id INT NOT NULL,
+    quote_text TEXT,
+    FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE
+);
+
+CREATE TABLE drafts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    request_id INT NOT NULL,
+    content LONGTEXT,
+    generated_at DATETIME,
+    FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE
+);
+Prompt Templates (Examples)
+You can later store these in a DB table (prompt_templates) or PHP array.
+Here are 3 ready-to-use examples:
+Write a clear and media-ready press release about a {topic_type} in the {category} sector.
+Dateline: {dateline_city}, {dateline_state}, {dateline_country} — {dateline_date}.
+Include the following quotes verbatim:
+{quotes}
+Keep tone {tone} and length {length_target}.
+End with an "About {company_name}" paragraph describing the company.
+2. Technology Press Release
+You are a tech journalist specializing in technology press releases.
+Write a compelling announcement about {company_name}’s {topic_type}.
+Include specifications or product highlights if relevant.
+Maintain a professional but innovative tone ({tone}).
+Include these quotes verbatim:
+{quotes}
+Structure:
+- Headline (with a strong benefit statement)
+- Dateline
+- Product or service overview
+- Quotes
+- Closing & About section
+3. Finance / Business Expansion
+You are a financial communications expert writing a press release.
+The release announces {company_name}’s {topic_type} in the {category} industry.
+Highlight financial growth, market positioning, or investment data if relevant.
+Include the following quotes exactly as provided:
+{quotes}
+Maintain an authoritative, investor-friendly tone ({tone}).
+Include an About {company_name} paragraph at the end.
+
+How to Run
+1. Save the code above as generate-press-release.php.
+2. Create the MySQL DB and run the schema above.
+3. Set your OpenAI key:
+4. export OPENAI_API_KEY="sk-yourkey"
+5. Open http://localhost/generate-press-release.php in your browser.
+6. Fill out the form and click Generate.
+
+?? 1. DATABASE SCHEMA (MySQL)
+CREATE TABLE press_release_prompts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    scenario VARCHAR(100) NOT NULL,               -- e.g. Product Launch, Event, Partnership
+    category VARCHAR(100) NOT NULL,               -- e.g. Technology, Finance, Health
+    tone VARCHAR(50) DEFAULT 'Professional',      -- e.g. Professional, Enthusiastic, Formal
+    title_template TEXT,                          -- Suggested headline or title structure
+    body_template TEXT,                           -- The main prompt template for the body
+    example_output TEXT,                          -- Example of what the generated release may look like
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+?? 2. PROMPT TEMPLATES (EXAMPLES)
+Here are comprehensive entries for major scenarios.
+Each entry is a “prompt template” that your PHP app can send to the ChatGPT API with user inputs inserted.
+
+1?? Product Launch
+Category: Technology
+Tone: Professional
+title_template:
+[Company Name] Announces the Launch of [Product Name], a Cutting-Edge Solution for [Problem/Market]
+body_template:
+Write a professional press release announcing the launch of [Product Name] by [Company Name]. 
+Include the following details:
+- Overview of the new product and its features
+- The problem it solves and its unique benefits
+- Company background and industry standing
+- Quote from [Executive Name], [Position] at [Company Name]
+- Closing paragraph with call to action and website link
+Dateline: [City, State, Country — Date]
+Ensure the tone is professional and formatted like a real press release.
+example_output:
+(Truncated example)
+SAN FRANCISCO, CA – October 27, 2025 – TechNova Inc. today announced the launch of NovaEdge, an AI-driven analytics platform designed to help enterprises optimize cloud infrastructure costs...
+
+2?? Business Expansion
+Category: Business
+Tone: Corporate
+title_template:
+[Company Name] Expands Operations into [New Market/Region]
+body_template:
+Write a corporate press release announcing [Company Name]'s expansion into [New Market/Region].
+Include:
+- Brief introduction of company and core services
+- Details of expansion and strategic importance
+- Impact on customers and stakeholders
+- Quote from CEO or Regional Director
+- Closing remarks about company vision and contact details
+Dateline: [City, State, Country — Date]
+
+3?? Partnership / Collaboration
+Category: Technology / Finance / Health
+Tone: Collaborative
+title_template:
+[Company A] and [Company B] Announce Strategic Partnership to [Purpose]
+body_template:
+Create a press release announcing a partnership between [Company A] and [Company B] to [Purpose].
+Include:
+- Overview of the collaboration
+- Benefits for customers or the industry
+- Quotes from executives of both companies
+- Expected outcomes or timeline
+- Call to action or website info
+Dateline: [City, State, Country — Date]
+
+4?? New Hiring / Leadership Appointment
+Category: Business
+Tone: Formal
+title_template:
+[Company Name] Appoints [Executive Name] as [Position Title]
+body_template:
+Write a press release announcing the appointment of [Executive Name] as [Position Title] at [Company Name].
+Include:
+- Brief intro about the company
+- Background of the executive and previous experience
+- Quote from company CEO or board member
+- Vision of the executive for the company
+- Contact info
+Dateline: [City, State, Country — Date]
+
+5?? Award Announcement
+Category: General / Industry-Specific
+Tone: Celebratory
+title_template:
+[Company Name] Receives [Award Title] for [Achievement]
+body_template:
+Generate a celebratory press release announcing that [Company Name] has won [Award Title].
+Include:
+- Background on the award and its significance
+- What achievement led to the recognition
+- Quote from the CEO or team lead
+- Closing with company overview and contact info
+Dateline: [City, State, Country — Date]
+
+6?? Event / Conference Announcement
+Category: Business / Technology
+Tone: Informative
+title_template:
+[Company Name] to Host [Event Name] on [Date]
+body_template:
+Generate a press release announcing that [Company Name] will host [Event Name] on [Date].
+Include:
+- Event details (location, speakers, agenda)
+- Purpose and expected attendees
+- Quotes from organizers
+- Registration or contact info
+Dateline: [City, State, Country — Date]
+
+7?? Crisis / Issue Management
+Category: Any
+Tone: Responsible / Reassuring
+title_template:
+[Company Name] Responds to [Incident/Issue] with Transparent Communication and Corrective Measures
+body_template:
+Write a responsible and reassuring press release addressing [Incident/Issue].
+Include:
+- Brief, factual summary of what happened
+- Steps the company is taking to resolve it
+- Quote from leadership emphasizing responsibility and transparency
+- Customer service or contact information for inquiries
+Dateline: [City, State, Country — Date]
+
+8?? Mergers and Acquisitions
+Category: Finance / Business
+Tone: Strategic
+title_template:
+[Company A] Acquires [Company B] to Strengthen [Sector/Market] Position
+body_template:
+Write a press release announcing the acquisition of [Company B] by [Company A].
+Include:
+- Overview of both companies
+- Strategic benefits and financial highlights
+- Quotes from executives
+- Future outlook
+Dateline: [City, State, Country — Date]
+
+9?? Research Findings / Industry Report
+Category: Research / Technology / Health
+Tone: Informative
+title_template:
+[Company Name] Releases New Study on [Topic]
+body_template:
+Create a press release summarizing a new research report by [Company Name] on [Topic].
+Include:
+- Key findings and insights
+- Impact on the industry
+- Quote from lead researcher or executive
+- Link to full report
+Dateline: [City, State, Country — Date]
+
+?? Rebranding / New Identity
+Category: Business / Marketing
+Tone: Visionary
+title_template:
+[Company Name] Unveils New Brand Identity Reflecting [Vision/Values]
+body_template:
+Write a press release announcing the rebranding of [Company Name].
+Include:
+- Old vs new brand elements (logo, tagline, mission)
+- Reason for change
+- Quote from leadership
+- Closing with company mission and contact
+Dateline: [City, State, Country — Date]
+
+?? 3. HOW TO USE (LLM Integration Logic)
+In your PHP backend:
+1. User selects scenario and category from form.
+2. System queries database:
+3. SELECT * FROM press_release_prompts 
+4. WHERE scenario = 'Product Launch' AND category = 'Technology';
+5. PHP builds the prompt by replacing variables [Company Name], [Product Name], [Date], etc.
+6. Send the final prompt to ChatGPT API for generation:
+7. $prompt = str_replace(
+8.   ["[Company Name]", "[Product Name]", "[Date]", "[Executive Name]"], 
+9.   [$company_name, $product_name, $date, $executive_name], 
+10.   $body_template
+11. );
+12. The API returns the complete press release.
+
+SQL SEED FILE: press_release_prompts.sql
+-- ========================================================
+--  PRESS RELEASE PROMPT KNOWLEDGE BASE SEED FILE
+--  Version: 1.0
+--  For: Evertise Ai PR – AI Press Release Generator
+-- ========================================================
+
+CREATE TABLE IF NOT EXISTS press_release_prompts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    scenario VARCHAR(100) NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    tone VARCHAR(50) DEFAULT 'Professional',
+    title_template TEXT,
+    body_template TEXT,
+    example_output TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 1. PRODUCT LAUNCH
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('Product Launch', 'Technology', 'Professional',
+'[Company Name] Announces the Launch of [Product Name], a Cutting-Edge Solution for [Problem/Market]',
+'Write a professional press release announcing the launch of [Product Name] by [Company Name]. 
+Include the following details:
+- Overview of the new product and its features
+- The problem it solves and its unique benefits
+- Company background and industry standing
+- Quote from [Executive Name], [Position] at [Company Name]
+- Closing paragraph with call to action and website link
+Dateline: [City, State, Country — Date]
+Ensure the tone is professional and formatted like a real press release.',
+'SAN FRANCISCO, CA – October 27, 2025 – TechNova Inc. today announced the launch of NovaEdge, an AI-driven analytics platform designed to help enterprises optimize cloud infrastructure costs.'
+);
+
+-- 2. BUSINESS EXPANSION
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('Business Expansion', 'Business', 'Corporate',
+'[Company Name] Expands Operations into [New Market/Region]',
+'Write a corporate press release announcing [Company Name]\'s expansion into [New Market/Region].
+Include:
+- Brief introduction of company and core services
+- Details of expansion and strategic importance
+- Impact on customers and stakeholders
+- Quote from CEO or Regional Director
+- Closing remarks about company vision and contact details
+Dateline: [City, State, Country — Date]',
+'DUBAI, UAE – October 27, 2025 – Horizon Logistics announced today its expansion into the Middle East, establishing a new regional hub to enhance last-mile delivery capabilities.'
+);
+
+-- 3. PARTNERSHIP / COLLABORATION
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('Partnership', 'Technology', 'Collaborative',
+'[Company A] and [Company B] Announce Strategic Partnership to [Purpose]',
+'Create a press release announcing a partnership between [Company A] and [Company B] to [Purpose].
+Include:
+- Overview of the collaboration
+- Benefits for customers or the industry
+- Quotes from executives of both companies
+- Expected outcomes or timeline
+- Call to action or website info
+Dateline: [City, State, Country — Date]',
+'LONDON, UK – October 27, 2025 – FinTechOne and SecurePay today announced a strategic partnership to deliver faster, more secure online payment solutions to European SMEs.'
+);
+
+-- 4. EXECUTIVE APPOINTMENT
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('New Hiring', 'Business', 'Formal',
+'[Company Name] Appoints [Executive Name] as [Position Title]',
+'Write a press release announcing the appointment of [Executive Name] as [Position Title] at [Company Name].
+Include:
+- Brief intro about the company
+- Background of the executive and previous experience
+- Quote from company CEO or board member
+- Vision of the executive for the company
+- Contact info
+Dateline: [City, State, Country — Date]',
+'NEW YORK, NY – October 27, 2025 – Apex Finance today announced the appointment of John M. Parker as Chief Financial Officer, bringing over 20 years of experience in corporate finance and global operations.'
+);
+
+-- 5. AWARD ANNOUNCEMENT
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('Award Announcement', 'General', 'Celebratory',
+'[Company Name] Receives [Award Title] for [Achievement]',
+'Generate a celebratory press release announcing that [Company Name] has won [Award Title].
+Include:
+- Background on the award and its significance
+- What achievement led to the recognition
+- Quote from the CEO or team lead
+- Closing with company overview and contact info
+Dateline: [City, State, Country — Date]',
+'LOS ANGELES, CA – October 27, 2025 – BrightMedia has been named “Best Digital Marketing Agency 2025” by Global Marketing Awards for its innovation in AI-driven campaign analytics.'
+);
+
+-- 6. EVENT ANNOUNCEMENT
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('Event Announcement', 'Technology', 'Informative',
+'[Company Name] to Host [Event Name] on [Date]',
+'Generate a press release announcing that [Company Name] will host [Event Name] on [Date].
+Include:
+- Event details (location, speakers, agenda)
+- Purpose and expected attendees
+- Quotes from organizers
+- Registration or contact info
+Dateline: [City, State, Country — Date]',
+'BOSTON, MA – October 27, 2025 – CloudSync will host its annual “AI Summit 2025” on December 2, bringing together global leaders in artificial intelligence and data engineering.'
+);
+
+-- 7. CRISIS MANAGEMENT
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('Crisis Management', 'General', 'Reassuring',
+'[Company Name] Responds to [Incident/Issue] with Transparent Communication and Corrective Measures',
+'Write a responsible and reassuring press release addressing [Incident/Issue].
+Include:
+- Brief, factual summary of what happened
+- Steps the company is taking to resolve it
+- Quote from leadership emphasizing responsibility and transparency
+- Customer service or contact information for inquiries
+Dateline: [City, State, Country — Date]',
+'CHICAGO, IL – October 27, 2025 – PureWater Co. today issued a statement following reports of limited product recalls, reaffirming its commitment to customer safety and quality assurance.'
+);
+
+-- 8. MERGER / ACQUISITION
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('Merger & Acquisition', 'Finance', 'Strategic',
+'[Company A] Acquires [Company B] to Strengthen [Sector/Market] Position',
+'Write a press release announcing the acquisition of [Company B] by [Company A].
+Include:
+- Overview of both companies
+- Strategic benefits and financial highlights
+- Quotes from executives
+- Future outlook
+Dateline: [City, State, Country — Date]',
+'NEW YORK, NY – October 27, 2025 – Zenith Capital announced today the acquisition of Alpha Brokers, a move aimed at expanding its investment footprint in the global insurance market.'
+);
+
+-- 9. RESEARCH FINDINGS
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('Research Announcement', 'Health', 'Informative',
+'[Company Name] Releases New Study on [Topic]',
+'Create a press release summarizing a new research report by [Company Name] on [Topic].
+Include:
+- Key findings and insights
+- Impact on the industry
+- Quote from lead researcher or executive
+- Link to full report
+Dateline: [City, State, Country — Date]',
+'BOSTON, MA – October 27, 2025 – MedLife Research released a groundbreaking study on AI-based diagnostic imaging, revealing a 35% improvement in early-stage disease detection accuracy.'
+);
+
+-- 10. REBRANDING ANNOUNCEMENT
+INSERT INTO press_release_prompts 
+(scenario, category, tone, title_template, body_template, example_output)
+VALUES
+('Rebranding', 'Business', 'Visionary',
+'[Company Name] Unveils New Brand Identity Reflecting [Vision/Values]',
+'Write a press release announcing the rebranding of [Company Name].
+Include:
+- Old vs new brand elements (logo, tagline, mission)
+- Reason for change
+- Quote from leadership
+- Closing with company mission and contact
+Dateline: [City, State, Country — Date]',
+'AUSTIN, TX – October 27, 2025 – EcoTrend Solutions has unveiled a new brand identity featuring a refreshed logo and tagline, “Sustainability in Every Step,” reflecting its commitment to green innovation.'
+);
+
+-- ? END OF PROMPT DATABASE SEED FILE
+Usage of LLM App with PHP
+1. When the user selects a scenario (e.g. Product Launch) and category (e.g. Technology):
+2. SELECT * FROM press_release_prompts 
+3. WHERE scenario='Product Launch' AND category='Technology';
+4. Retrieve the record and replace placeholders in body_template dynamically using user form data:
+5. $prompt = str_replace(
+6.     ["[Company Name]", "[Product Name]", "[Executive Name]", "[Date]", "[City]", "[Country]", "[Position]"],
+7.     [$company_name, $product_name, $executive_name, $date, $city, $country, $position],
+8.     $row['body_template']
+);
+
+Complete PHP implementation that integrates MySQL prompt database with the ChatGPT API :
+<?php
+/***************************************************
+ * Evertise AI PR – Press Release Generator
+ * -----------------------------------------------
+ * Description: Fetches the appropriate press release 
+ * prompt template from database, replaces placeholders 
+ * with user input, and generates a full press release 
+ * using OpenAI GPT API.
+ ***************************************************/
+
+// ---------------- CONFIGURATION -----------------
+$host = "localhost";
+$dbname = "evertise_ai_pr";
+$username = "root";
+$password = ""; // your DB password
+$api_key = "sk-YOUR_OPENAI_API_KEY"; // replace with your API key
+
+// ---------------- USER INPUT --------------------
+// Typically this comes from a form POST request:
+$userInput = [
+    "name" => "John Doe",
+    "email" => "john@example.com",
+    "company_name" => "TechNova Inc.",
+    "website" => "https://www.technova.ai",
+    "press_topic" => "Product Launch",
+    "category" => "Technology",
+    "dateline_city" => "San Francisco",
+    "dateline_state" => "CA",
+    "dateline_country" => "USA",
+    "dateline_date" => "October 27, 2025",
+    "executive_name" => "Sarah Johnson",
+    "executive_position" => "CEO",
+    "quote" => "Our new product represents a leap forward in innovation and customer experience."
+];
+
+// ---------------- CONNECT TO DATABASE ----------------
+$conn = new mysqli($host, $username, $password, $dbname);
+if ($conn->connect_error) {
+    die("Database connection failed: " . $conn->connect_error);
+}
+
+// ---------------- FETCH PROMPT TEMPLATE ---------------
+$scenario = $conn->real_escape_string($userInput['press_topic']);
+$category = $conn->real_escape_string($userInput['category']);
+
+$sql = "SELECT * FROM press_release_prompts 
+        WHERE scenario = '$scenario' AND category = '$category' 
+        LIMIT 1";
+
+$result = $conn->query($sql);
+
+if ($result->num_rows === 0) {
+    die("No matching prompt template found for scenario '$scenario' and category '$category'.");
+}
+
+$template = $result->fetch_assoc();
+
+// ---------------- BUILD PROMPT ------------------------
+$prompt = $template['body_template'];
+
+// Replace placeholders dynamically
+$replacements = [
+    "[Company Name]" => $userInput["company_name"],
+    "[Product Name]" => $userInput["press_topic"],
+    "[Executive Name]" => $userInput["executive_name"],
+    "[Position]" => $userInput["executive_position"],
+    "[City]" => $userInput["dateline_city"],
+    "[State]" => $userInput["dateline_state"],
+    "[Country]" => $userInput["dateline_country"],
+    "[Date]" => $userInput["dateline_date"],
+    "[Quote]" => $userInput["quote"],
+    "[Website]" => $userInput["website"]
+];
+
+$final_prompt = str_replace(array_keys($replacements), array_values($replacements), $prompt);
+
+// Optional: add additional structure
+$final_prompt .= "\n\nThe press release should include a clear title, structured paragraphs, and end with contact details:\n" .
+"Contact: {$userInput['name']} | {$userInput['email']} | {$userInput['website']}";
+
+// ---------------- CALL OPENAI API ---------------------
+$ch = curl_init("https://api.openai.com/v1/chat/completions");
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    "Authorization: Bearer $api_key",
+    "Content-Type: application/json"
+]);
+
+$payload = json_encode([
+    "model" => "gpt-4o-mini",  // lightweight and cost-efficient; use "gpt-4o" for production quality
+    "messages" => [
+        ["role" => "system", "content" => "You are an expert press release writer for a PR distribution platform called Evertise Ai PR. Follow standard AP-style formatting."],
+        ["role" => "user", "content" => $final_prompt]
+    ],
+    "temperature" => 0.7
+]);
+
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+
+$response = curl_exec($ch);
+
+if (curl_errno($ch)) {
+    die("cURL Error: " . curl_error($ch));
+}
+
+curl_close($ch);
+
+// ---------------- HANDLE RESPONSE ---------------------
+$response_data = json_decode($response, true);
+
+if (isset($response_data['choices'][0]['message']['content'])) {
+    $generated_press_release = $response_data['choices'][0]['message']['content'];
+} else {
+    $generated_press_release = "Error generating press release. Response:\n" . $response;
+}
+
+// ---------------- OUTPUT ------------------------------
+echo "<h2>Generated Press Release</h2>";
+echo "<pre style='white-space: pre-wrap; font-family: Arial, sans-serif;'>";
+echo htmlspecialchars($generated_press_release);
+echo "</pre>";
+
+$conn->close();
+?>

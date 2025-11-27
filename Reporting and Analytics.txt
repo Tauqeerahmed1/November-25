@@ -1,0 +1,118 @@
+Distribution & Analytics Cross Time Report: 
+1?? Database Schema for Distribution Reports
+-- Table to store report metrics for each press release on each website
+CREATE TABLE distribution_report (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    press_release_id INT NOT NULL,
+    site_id INT NOT NULL,
+    published_url VARCHAR(500),
+    views INT DEFAULT 0,
+    published_at TIMESTAMP NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (press_release_id) REFERENCES press_releases(id),
+    FOREIGN KEY (site_id) REFERENCES distribution_sites(id)
+);
+Notes:
+* views: Tracked via JavaScript or tracking code in the press release.
+* published_at: Timestamp when the PR is detected live on the website.
+* updated_at: Timestamp for auto-updated views/links.
+
+2?? Data Flow / Workflow
+1. Distribution System Push
+o Press release is sent to websites/packages (as per recommendation).
+o Each website record in distribution_report is created with published_url=NULL and views=0.
+2. Publication Detection
+o A cron job / background scheduler checks each site’s feed/API to detect publication.
+o Once live, published_url and published_at are updated.
+3. View Tracking
+o A tracking pixel or JS snippet is inserted into the press release HTML (or via API if supported).
+o The snippet sends back views data to your server periodically (e.g., hourly).
+4. Report Generation
+o System fetches all entries for a press release from distribution_report.
+o Fetches metadata for each site (logo_url, category, estimated traffic) from distribution_sites.
+o Combines this into a cross-time analytics report with live updates.
+
+3?? Sample PHP Function to Generate Distribution Report
+<?php
+function generate_distribution_report($pdo, $press_release_id){
+    // Fetch distribution report entries with site info
+    $stmt = $pdo->prepare("
+        SELECT d.name, d.logo_url, d.category, d.estimated_traffic, 
+               r.published_url, r.views, r.published_at
+        FROM distribution_report r
+        JOIN distribution_sites d ON r.site_id = d.id
+        WHERE r.press_release_id = :prid
+        ORDER BY r.published_at ASC
+    ");
+    $stmt->execute([':prid'=>$press_release_id]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Build HTML report
+    $html = "<h2>Distribution Analytics Report</h2>";
+    $html .= "<table border='1' cellpadding='5' cellspacing='0'>
+        <tr>
+            <th>Website</th>
+            <th>Logo</th>
+            <th>Category</th>
+            <th>Estimated Traffic</th>
+            <th>Published URL</th>
+            <th>Views</th>
+            <th>Published At</th>
+        </tr>";
+    
+    foreach($rows as $row){
+        $html .= "<tr>
+            <td>{$row['name']}</td>
+            <td><img src='{$row['logo_url']}' width='80' alt='{$row['name']}'></td>
+            <td>{$row['category']}</td>
+            <td>{$row['estimated_traffic']}</td>
+            <td><a href='{$row['published_url']}' target='_blank'>{$row['published_url']}</a></td>
+            <td>{$row['views']}</td>
+            <td>{$row['published_at']}</td>
+        </tr>";
+    }
+    
+    $html .= "</table>";
+    return $html;
+}
+
+4?? Tracking Views / Clicks
+Option 1: Tracking Pixel
+<img src="https://yourserver.com/tracking.php?pr_id=123&site_id=456" width="1" height="1" />
+tracking.php:
+<?php
+$pr_id = $_GET['pr_id'];
+$site_id = $_GET['site_id'];
+
+$stmt = $pdo->prepare("UPDATE distribution_report 
+    SET views = views + 1 
+    WHERE press_release_id = :prid AND site_id = :siteid");
+$stmt->execute([':prid'=>$pr_id, ':siteid'=>$site_id]);
+
+header("Content-Type: image/gif");
+echo base64_decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="); // 1x1 transparent gif
+Option 2: JavaScript snippet
+* Insert a small JS snippet in the press release HTML to send AJAX calls to your server.
+* Useful for dynamic updates without page reload.
+
+5?? Automatic Report Updates
+* Cron Job / Background Worker runs every 1–2 hours:
+o Checks publication status for URLs that are still NULL.
+o Updates published_url and published_at once detected.
+o Updates views from tracking data.
+* Client receives updated distribution report periodically (e.g., after 6–8 hours).
+* The same report updates automatically as late-published links come in.
+
+6?? Example HTML Report Output
+WebsiteLogoCategoryEst. TrafficPublished URLViewsPublished AtYahoo Finance![logo]Business3,000,000link1452025-10-27 12:35Medical Daily![logo]Healthcare250,000link622025-10-27 12:42TechCrunch![logo]Technology2,500,000link2002025-10-27 13:10* Links that are delayed are filled in automatically once detected.
+* Views update live as users read the press release.
+
+? Key Features
+1. Proof-of-distribution for clients (legal/commercial validation).
+2. Cross-time updates: handles staggered publication timelines.
+3. Real-time views tracking using pixel or JS.
+4. Combined with prior modules, the system now handles:
+o PR generation (AI)
+o Smart distribution (recommendations)
+o Distribution analytics / reporting
+
