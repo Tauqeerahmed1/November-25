@@ -1,4 +1,4 @@
-# Efficient Small Language Model–Driven Personalized Press Release Distribution: From Draft‑to‑Impact with Adaptive Packages and Closed‑Loop Analytics
+# Optimizing Press Release Distribution via Small Language Models and Adaptive Packaging
 
 ## Abstract
 
